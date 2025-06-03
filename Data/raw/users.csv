@@ -1,0 +1,7 @@
+user_id,age,gender,occupation,city,genre
+U1,25,Female,Engineer,Mumbai,Fiction
+U2,34,Male,Teacher,Delhi,Mystery
+U3,19,Female,Student,Bangalore,Romance
+U4,45,Male,Artist,Pune,Fantasy
+U5,29,Other,Engineer,Hyderabad,Science
+U6,38,Female,Teacher,Chennai,Comics
