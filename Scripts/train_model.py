@@ -1,62 +1,83 @@
-import pandas as pd
 import os
-import pickle
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import LabelEncoder, StandardScaler, OneHotEncoder
+import pandas as pd
+import joblib
+from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.compose import ColumnTransformer
+from sklearn.metrics import classification_report
 
-# Paths
-RAW_DIR = os.path.join("data", "raw")
-ARTIFACTS_DIR = os.path.join("Scripts", "Artifacts")
-os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+# === PATH SETUP ===
+RAW_DIR = r"C:\Users\Saanvi Hegde\OneDrive\Desktop\mlops\BookBuddy\Data\raw"
+MODEL_DIR = os.path.join("models")
+os.makedirs(MODEL_DIR, exist_ok=True)
 
-# Load data
-ratings_df = pd.read_csv(os.path.join(RAW_DIR, "ratings.csv"))
+# === LOAD DATASETS ===
 users_df = pd.read_csv(os.path.join(RAW_DIR, "users.csv"))
 books_df = pd.read_csv(os.path.join(RAW_DIR, "books.csv"))
+ratings_df = pd.read_csv(os.path.join(RAW_DIR, "ratings.csv"))
 
-# Convert IDs to strings
-ratings_df["user_id"] = ratings_df["user_id"].astype(str)
-ratings_df["book_id"] = ratings_df["book_id"].astype(str)
-users_df["user_id"] = users_df["user_id"].astype(str)
-books_df["book_id"] = books_df["book_id"].astype(str)
+# === RENAME TO AVOID COLUMN COLLISIONS ===
+users_df = users_df.rename(columns={"genre": "preferred_genre"})
+books_df = books_df.rename(columns={"genre": "book_genre"})
 
-# Merge
-merged_df = ratings_df.merge(users_df, on="user_id", how="inner").merge(books_df, on="book_id", how="inner")
+# === MERGE ALL DATA ===
+merged_df = ratings_df.merge(users_df, on="user_id", how="left")
+merged_df = merged_df.merge(books_df, on="book_id", how="left")
 
-# Features and target
-X = merged_df[["user_id", "age", "gender", "occupation", "city", "language", "genre"]]
-y = merged_df["rating"]
+# === LABEL ENCODING ===
+le_user = LabelEncoder()
+le_gender = LabelEncoder()
+le_occupation = LabelEncoder()
+le_city = LabelEncoder()
+le_language = LabelEncoder()
+le_genre = LabelEncoder()
 
-# Encode target
-label_encoder = LabelEncoder()
-y_encoded = label_encoder.fit_transform(y)
+merged_df["user_id_encoded"] = le_user.fit_transform(merged_df["user_id"])
+merged_df["gender_encoded"] = le_gender.fit_transform(merged_df["gender"])
+merged_df["occupation_encoded"] = le_occupation.fit_transform(merged_df["occupation"])
+merged_df["city_encoded"] = le_city.fit_transform(merged_df["city"])
+merged_df["language_encoded"] = le_language.fit_transform(merged_df["language"])
+merged_df["book_genre_encoded"] = le_genre.fit_transform(merged_df["book_genre"])
 
-# Split data
-X_train, X_test, y_train, y_test = train_test_split(X, y_encoded, test_size=0.2, random_state=42)
+# === FEATURES & TARGET ===
+X = merged_df[[
+    "user_id_encoded", "age", "gender_encoded",
+    "occupation_encoded", "city_encoded", "book_genre_encoded"  # ❌ Removed language_encoded
+]]
 
-# Preprocessing pipeline for categorical columns
-categorical_cols = X.select_dtypes(include="object").columns.tolist()
-preprocessor = ColumnTransformer([
-    ("onehot", OneHotEncoder(handle_unknown="ignore"), categorical_cols)
-])
+y = merged_df["book_id"]
 
-# Full pipeline including preprocessing, scaling, and classifier
-full_pipeline = Pipeline([
-    ("preprocessing", preprocessor),
-    ("scaler", StandardScaler(with_mean=False)),
-    ("clf", RandomForestClassifier(n_estimators=100, random_state=42))
-])
+# === TRAIN-TEST SPLIT ===
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
 
-# Train model pipeline
-full_pipeline.fit(X_train, y_train)
+# === TRAIN MODEL ===
+model = RandomForestClassifier(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
 
-# Save the whole pipeline as model artifact
-with open(os.path.join(ARTIFACTS_DIR, "best_classifier.pkl"), "wb") as f:
-    pickle.dump(full_pipeline, f)
+# === EVALUATION ===
+y_pred = model.predict(X_test)
+print("\n📊 Model Evaluation:\n")
+print(classification_report(y_test, y_pred))
 
-# Save label encoder separately
-with open(os.path.join(ARTIFACTS_DIR, "label_encoder.pkl"), "wb") as f:
-    pickle.dump(label_encoder, f)
+# === SAVE MODEL ===
+joblib.dump(model, os.path.join(MODEL_DIR, "recommender_model.pkl"))
+
+# === SAVE ENCODERS ===
+joblib.dump(le_user, os.path.join(MODEL_DIR, "le_user.pkl"))
+joblib.dump(le_gender, os.path.join(MODEL_DIR, "le_gender.pkl"))
+joblib.dump(le_occupation, os.path.join(MODEL_DIR, "le_occupation.pkl"))
+joblib.dump(le_city, os.path.join(MODEL_DIR, "le_city.pkl"))
+joblib.dump(le_language, os.path.join(MODEL_DIR, "le_language.pkl"))
+joblib.dump(le_genre, os.path.join(MODEL_DIR, "le_genre.pkl"))  # ⬅️ renamed from le_book_genre
+
+# === OPTIONAL: Save metadata for reference ===
+with open(os.path.join(MODEL_DIR, "training_info.txt"), "w") as f:
+    f.write("Model: RandomForestClassifier\n")
+    f.write("Features: user_id_encoded, age, gender_encoded, occupation_encoded, city_encoded, language_encoded, book_genre_encoded\n")
+    f.write("Target: book_id\n")
+    f.write("Encoders: le_user, le_gender, le_occupation, le_city, le_language, le_genre\n")
+    f.write("Train/Test split: 80/20\n")
+
+print("✅ Model training and saving completed.")

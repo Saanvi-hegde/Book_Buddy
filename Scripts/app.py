@@ -1,68 +1,82 @@
 import streamlit as st
 import pandas as pd
 import os
-import pickle
-from dotenv import load_dotenv
+from joblib import load
 
-from helper_functions import log_info, log_error
-from ml_functions import recommend_books
+# === PATH SETUP ===
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+MODEL_DIR = os.path.join(BASE_DIR, "Scripts", "models")
+RAW_DIR = os.path.join(BASE_DIR, "Data", "raw")
 
-load_dotenv()
+# === MODEL & ENCODER PATHS ===
+MODEL_PATH = os.path.join(MODEL_DIR, "recommender_model.pkl")
+LE_USER_PATH = os.path.join(MODEL_DIR, "le_user.pkl")
+LE_GENDER_PATH = os.path.join(MODEL_DIR, "le_gender.pkl")
+LE_OCCUPATION_PATH = os.path.join(MODEL_DIR, "le_occupation.pkl")
+LE_CITY_PATH = os.path.join(MODEL_DIR, "le_city.pkl")
+LE_GENRE_PATH = os.path.join(MODEL_DIR, "le_book_genre.pkl")  # ✅ Rename matched to training
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ARTIFACTS_DIR = os.path.join(BASE_DIR, os.getenv('ARTIFACTS_DIR', '../Artifacts'))
+# === LOAD MODEL ===
+try:
+    model = load(MODEL_PATH)
+except Exception as e:
+    st.error(f"❌ Could not load model: {e}")
+    st.stop()
 
-MODEL_PATH = os.path.join(ARTIFACTS_DIR, "best_classifier.pkl")
-LABEL_ENCODER_PATH = os.path.join(ARTIFACTS_DIR, "label_encoder.pkl")
+# === LOAD ENCODERS ===
+try:
+    le_user = load(LE_USER_PATH)
+    le_gender = load(LE_GENDER_PATH)
+    le_occupation = load(LE_OCCUPATION_PATH)
+    le_city = load(LE_CITY_PATH)
+    le_genre = load(LE_GENRE_PATH)
+except Exception as e:
+    st.error(f"❌ Could not load encoders: {e}")
+    st.stop()
 
-@st.cache_data
-def load_pickle(path):
+# === LOAD RAW DATA ===
+try:
+    users_df = pd.read_csv(os.path.join(RAW_DIR, "users.csv"))
+    users_df = users_df.rename(columns={"genre": "preferred_genre"})
+    books_df = pd.read_csv(os.path.join(RAW_DIR, "books.csv"))
+    books_df = books_df.rename(columns={"genre": "book_genre"})  # ✅ Match training step
+except Exception as e:
+    st.error(f"❌ Could not load data files: {e}")
+    st.stop()
+
+# === STREAMLIT UI ===
+st.title("📚 BookBuddy - Smart Book Recommender")
+st.sidebar.header("Enter User Details")
+
+user_id = st.sidebar.selectbox("User ID", users_df["user_id"].unique())
+age = st.sidebar.slider("Age", 10, 80, 25)
+gender = st.sidebar.selectbox("Gender", users_df["gender"].unique())
+occupation = st.sidebar.selectbox("Occupation", users_df["occupation"].unique())
+city = st.sidebar.selectbox("City", users_df["city"].unique())
+genre = st.sidebar.selectbox("Preferred Genre", users_df["preferred_genre"].unique())
+
+if st.sidebar.button("📖 Recommend Book"):
     try:
-        with open(path, "rb") as f:
-            return pickle.load(f)
-    except Exception as e:
-        log_error(f"Error loading {path}: {str(e)}")
-        return None
-
-model = load_pickle(MODEL_PATH)
-label_encoder = load_pickle(LABEL_ENCODER_PATH)
-
-st.title("📚 BookBuddy")
-st.markdown("Your personalized book recommender engine powered by machine learning.")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    user_id = st.text_input("Enter your User ID", "")
-    age = st.slider("Select your Age", 12, 80, 25)
-    gender = st.selectbox("Select Gender", ["Male", "Female", "Other"])
-    occupation = st.selectbox("Select Occupation", ["Student", "Engineer", "Teacher", "Artist", "Other"])
-
-with col2:
-    city = st.text_input("Enter your City")
-    language = st.selectbox("Preferred Language", ["English", "Spanish", "Hindi", "French", "Other"])
-    genre = st.multiselect("Favorite Genres", ["Fiction", "Science", "History", "Biography", "Comics", "Mystery"])
-
-if st.button("📖 Recommend Books"):
-    if not model or not label_encoder:
-        st.error("Error: Model artifacts not properly loaded.")
-    elif not user_id:
-        st.warning("Please enter User ID.")
-    else:
-        # Pass only user features expected by the model
-        user_input = {
-            "user_id": user_id,
+        input_data = {
+            "user_id_encoded": le_user.transform([user_id])[0],
             "age": age,
-            "gender": gender,
-            "occupation": occupation,
-            "city": city
+            "gender_encoded": le_gender.transform([gender])[0],
+            "occupation_encoded": le_occupation.transform([occupation])[0],
+            "city_encoded": le_city.transform([city])[0],
+            "book_genre_encoded": le_genre.transform([genre])[0]
         }
-        try:
-            recommendations = recommend_books(user_input, model, label_encoder)
-            if recommendations.empty:
-                st.warning("No recommendations found for the given preferences.")
-            else:
-                st.success("Top Book Recommendations:")
-                st.dataframe(recommendations)
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
+
+        input_df = pd.DataFrame([input_data])
+        predicted_book_id = model.predict(input_df)[0]
+
+        book = books_df[books_df["book_id"] == int(predicted_book_id)]
+
+        if not book.empty:
+            book = book.iloc[0]
+            st.success(f"✅ We recommend: **{book['title']}** by *{book['author']}*")
+            st.info(f"Genre: {book['book_genre']}")
+        else:
+            st.warning("⚠️ No matching book found for the predicted ID.")
+
+    except Exception as e:
+        st.error(f"❌ Prediction error: {e}")

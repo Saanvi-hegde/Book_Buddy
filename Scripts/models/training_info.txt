@@ -1,0 +1,5 @@
+Model: RandomForestClassifier
+Features: user_id_encoded, age, gender_encoded, occupation_encoded, city_encoded, language_encoded, book_genre_encoded
+Target: book_id
+Encoders: le_user, le_gender, le_occupation, le_city, le_language, le_genre
+Train/Test split: 80/20
